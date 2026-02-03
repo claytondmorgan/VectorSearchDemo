@@ -24,7 +24,7 @@ public class OpenApiConfig {
                         .title("LLM Vector Search API")
                         .version("1.0.0")
                         .description("""
-                                Vector similarity search API powered by pgvector and ONNX Runtime.
+                                Vector similarity search API powered by pgvector and huggingface.
 
                                 ## Features
                                 - **Semantic Search**: Search products by meaning, not just keywords
