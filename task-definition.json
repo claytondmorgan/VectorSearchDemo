@@ -1,0 +1,44 @@
+{
+  "family": "llm-search-engine-task",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::717914742237:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::717914742237:role/llm-ecs-task-role",
+  "containerDefinitions": [
+    {
+      "name": "search-engine",
+      "image": "717914742237.dkr.ecr.us-east-1.amazonaws.com/llm-search-engine:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "AWS_SECRETS_ENABLED", "value": "true" },
+        { "name": "DB_SECRET_NAME", "value": "llm-db-credentials" },
+        { "name": "AWS_REGION", "value": "us-east-1" },
+        { "name": "EMBEDDING_SERVICE_URL", "value": "http://llm-alb-1402483560.us-east-1.elb.amazonaws.com" },
+        { "name": "JAVA_OPTS", "value": "-Xms256m -Xmx512m -XX:+UseG1GC" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/llm-search-engine",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "search"
+        }
+      },
+      "healthCheck": {
+        "command": ["CMD-SHELL", "curl -f http://localhost:8080/api/health || exit 1"],
+        "interval": 30,
+        "timeout": 10,
+        "retries": 3,
+        "startPeriod": 30
+      }
+    }
+  ]
+}
