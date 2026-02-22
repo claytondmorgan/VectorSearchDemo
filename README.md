@@ -1,13 +1,12 @@
 # LLM Vector Search Engine
 
-A Spring Boot service that provides semantic vector search capabilities using pgvector and delegated embeddings from a Python inference service.
+A Spring Boot service that provides semantic and hybrid vector search for both product data and legal documents, using pgvector and delegated embeddings from a Python inference service.
 
 ## AWS Deployment
 
 The service is deployed to AWS ECS and accessible via Application Load Balancer.
 
 **Base URL:** `http://llm-alb-1402483560.us-east-1.elb.amazonaws.com`
-
 
 ## API Documentation
 
@@ -28,16 +27,21 @@ http://llm-alb-1402483560.us-east-1.elb.amazonaws.com/v3/api-docs
 ### Health Check
 
 ```bash
+# Product search health
 curl http://llm-alb-1402483560.us-east-1.elb.amazonaws.com/api/health
+
+# Legal search health
+curl http://llm-alb-1402483560.us-east-1.elb.amazonaws.com/api/legal/health
 ```
 
 ### Service Info
 
 ```bash
 curl http://llm-alb-1402483560.us-east-1.elb.amazonaws.com/api/info
+curl http://llm-alb-1402483560.us-east-1.elb.amazonaws.com/api/legal/info
 ```
 
-### Search Example
+### Product Search Example
 
 ```bash
 curl -X POST http://llm-alb-1402483560.us-east-1.elb.amazonaws.com/api/search \
@@ -45,37 +49,39 @@ curl -X POST http://llm-alb-1402483560.us-east-1.elb.amazonaws.com/api/search \
   -d '{"query": "comfortable running shoes", "top_k": 5}'
 ```
 
-## Running the Test Suite
-
-The `test-search-api.sh` script runs a comprehensive test suite against the API.
-
-### Test Against AWS (Production)
+### Legal Document Search Examples
 
 ```bash
-./test-search-api.sh http://llm-alb-1402483560.us-east-1.elb.amazonaws.com
+# Semantic search
+curl -X POST http://llm-alb-1402483560.us-east-1.elb.amazonaws.com/api/legal/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "employment discrimination reasonable accommodation", "top_k": 5}'
+
+# Hybrid search (semantic + keyword with Reciprocal Rank Fusion)
+curl -X POST http://llm-alb-1402483560.us-east-1.elb.amazonaws.com/api/legal/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "42 U.S.C. § 1983 civil rights", "top_k": 5, "search_field": "hybrid"}'
+
+# Jurisdiction filtering
+curl -X POST http://llm-alb-1402483560.us-east-1.elb.amazonaws.com/api/legal/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "wrongful termination", "top_k": 5, "jurisdiction": "CA"}'
+
+# Exclude overruled cases (Shepard's-style filtering)
+curl -X POST http://llm-alb-1402483560.us-east-1.elb.amazonaws.com/api/legal/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "separate but equal", "top_k": 10, "status_filter": "exclude_overruled"}'
 ```
 
-### Test Against Local
+### Legal Document Statistics
 
 ```bash
-./test-search-api.sh
-# or explicitly:
-./test-search-api.sh http://localhost:8080
+curl http://llm-alb-1402483560.us-east-1.elb.amazonaws.com/api/legal/stats
 ```
-
-### Test Output
-
-The script tests:
-- Health and info endpoints
-- Basic search functionality
-- Search field options (title vs content)
-- Similarity threshold filtering
-- Semantic search quality
-- Edge cases and error handling
-- Response structure validation
-- Performance benchmarks
 
 ## API Endpoints
+
+### Product Search
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -83,7 +89,16 @@ The script tests:
 | GET | `/api/info` | Service information |
 | POST | `/api/search` | Vector similarity search |
 
-### Search Request Body
+### Legal Document Search
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/legal/search` | Semantic/hybrid search with metadata filters |
+| GET | `/api/legal/health` | Legal search health check |
+| GET | `/api/legal/info` | Legal service info and capabilities |
+| GET | `/api/legal/stats` | Document counts by type, jurisdiction, practice area, status |
+
+### Product Search Request
 
 ```json
 {
@@ -101,18 +116,164 @@ The script tests:
 | search_field | string | "content" | Field to search ("content" or "title") |
 | similarity_threshold | float | 0.0 | Minimum similarity score (0.0-1.0) |
 
+### Legal Search Request
+
+```json
+{
+  "query": "employment discrimination reasonable accommodation",
+  "top_k": 10,
+  "search_field": "content",
+  "jurisdiction": "CA",
+  "doc_type": "case_law",
+  "practice_area": "employment",
+  "status_filter": "exclude_overruled"
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| query | string | required | Search query text |
+| top_k | integer | 10 | Number of results (1-100) |
+| search_field | string | "content" | `content`, `title`, `headnotes`, or `hybrid` |
+| jurisdiction | string | null | Filter: `US_Supreme_Court`, `CA`, `NY`, `Federal_9th_Circuit`, etc. |
+| doc_type | string | null | Filter: `case_law`, `statute`, `regulation`, `practice_guide` |
+| practice_area | string | null | Filter: `employment`, `constitutional_law`, `criminal`, `tort`, etc. |
+| status_filter | string | null | `exclude_overruled` to omit overruled authorities |
+| similarity_threshold | float | 0.0 | Minimum similarity score (0.0-1.0) |
+
+## Architecture
+
+```
+                    Client (curl / Swagger UI)
+                         |
+                         v
+              ┌─────────────────────┐
+              │   ALB (port 80)     │
+              │   /api/*  -> :8080  │
+              │   /*      -> :8000  │
+              └────────┬────────────┘
+                       |
+          ┌────────────┴────────────┐
+          |                         |
+    ┌─────▼──────────┐     ┌───────▼─────────────┐
+    │  Java Service   │     │  Python Service      │
+    │  Spring Boot    │     │  FastAPI              │
+    │  port 8080      │     │  port 8000            │
+    │                 │     │                       │
+    │ /api/search     │────>│ POST /embed (384-dim) │
+    │ (product)       │     │ all-MiniLM-L6-v2      │
+    │                 │     │                       │
+    │ /api/legal/*    │────>│ POST /legal/search    │
+    │ (legal search)  │     │ ModernBERT (768-dim)  │
+    │                 │     │                       │
+    │ /api/legal/stats│     │ POST /legal/rag       │
+    │ (direct DB)     │     │ Phi-3.5 Mini          │
+    └────────┬────────┘     └───────┬───────────────┘
+             |                      |
+             └──────────┬───────────┘
+                        |
+               ┌────────▼────────┐
+               │  PostgreSQL RDS │
+               │  + pgvector     │
+               │                 │
+               │ ingested_records│  384-dim (products)
+               │ legal_documents │  768-dim (legal)
+               │ HNSW indexes   │
+               └─────────────────┘
+```
+
+### Key Design Decisions
+
+- **Product search**: Java generates 384-dim embeddings via Python `/embed`, then queries `ingested_records` directly
+- **Legal search**: Java delegates to Python `/legal/search` because legal documents use a different 768-dim embedding model (ModernBERT Legal). The embedding model is only loaded in Python, so search execution stays there.
+- **Stats/counts**: Java queries `legal_documents` table directly (no embeddings needed)
+- **Hybrid search**: Combines semantic (vector cosine similarity via HNSW) with keyword (PostgreSQL tsvector/GIN) using Reciprocal Rank Fusion
+
+## Running the Test Suites
+
+### Product Search Tests (26 tests)
+
+```bash
+# Against AWS
+./test-search-api.sh http://llm-alb-1402483560.us-east-1.elb.amazonaws.com
+
+# Against local
+./test-search-api.sh
+```
+
+### Legal Search Tests (29 tests)
+
+```bash
+# Against AWS
+./test-legal-api.sh http://llm-alb-1402483560.us-east-1.elb.amazonaws.com
+
+# Against local
+./test-legal-api.sh
+```
+
+### Test Coverage
+
+**Product tests** (`test-search-api.sh`):
+- Health and info endpoints
+- Basic search with various top_k
+- Search field options (title vs content)
+- Similarity threshold filtering
+- Semantic search quality
+- Edge cases and error handling
+- Response structure validation
+- Performance benchmarks (10 sequential searches)
+
+**Legal tests** (`test-legal-api.sh`):
+- Health, info, and stats endpoints
+- Semantic search (employment discrimination, negligence, Miranda rights, etc.)
+- Hybrid search (statute citations, civil rights, ADA)
+- Jurisdiction filtering (CA vs NY vs US Supreme Court)
+- Shepard's status filtering (exclude overruled)
+- Document type filtering (statutes vs case law vs practice guides)
+- Semantic vs hybrid comparison (citation symbol handling)
+- Edge cases (empty query, missing fields, combined filters)
+- Response structure validation (legal-specific fields)
+- Performance benchmarks (10 sequential legal searches)
+
 ## Deployment
 
-To deploy changes to AWS:
+### Full Legal Deployment (DB + build + deploy + verify)
+
+```bash
+./deploy-legal.sh
+```
+
+### Java-Only Redeploy (skip DB setup)
+
+```bash
+./deploy-legal.sh --skip-db
+```
+
+### Product-Only Redeploy
 
 ```bash
 ./redeploy.sh
 ```
 
-This script:
-1. Builds the project with Maven
-2. Creates a Docker image
-3. Pushes to ECR
-4. Updates the ECS task definition
-5. Forces a new deployment
-6. Verifies the deployment with health checks
+### Database Schema Setup
+
+```bash
+./setup-legal-db.sh
+```
+
+### Deployment Steps
+
+`deploy-legal.sh` performs:
+1. Creates `legal_documents` table in RDS (if not exists)
+2. Builds the project with Maven
+3. Creates a Docker image (linux/amd64)
+4. Pushes to ECR
+5. Updates the ECS task definition
+6. Forces a new ECS deployment
+7. Waits for rollout to stabilize
+8. Verifies both product and legal search endpoints
+
+## Additional Documentation
+
+- **[RUNBOOK-legal-search.md](RUNBOOK-legal-search.md)** — Detailed runbook covering model choices (pros/cons), ingestion encoding, search decoding, RAG generation, operations, and troubleshooting
+- **[legal-demo-plan.md](legal-demo-plan.md)** — Original implementation plan for the legal document search adaptation

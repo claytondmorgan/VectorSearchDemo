@@ -27,14 +27,22 @@ public class OpenApiConfig {
                                 Vector similarity search API powered by pgvector and huggingface.
 
                                 ## Features
-                                - **Semantic Search**: Search products by meaning, not just keywords
+                                - **Semantic Search**: Search products and legal documents by meaning, not just keywords
+                                - **Hybrid Search**: Combine semantic + keyword search with Reciprocal Rank Fusion (legal)
                                 - **384-dimensional embeddings**: Using sentence-transformers/all-MiniLM-L6-v2
                                 - **HNSW Index**: Fast approximate nearest neighbor search via pgvector
                                 - **Cosine Similarity**: Results ranked by semantic similarity (0.0 - 1.0)
 
-                                ## Search Fields
+                                ## Product Search (/api/search)
                                 - `content`: Search against product descriptions (default)
                                 - `title`: Search against product titles only
+
+                                ## Legal Document Search (/api/legal/search)
+                                - `content`: Semantic search against document body text (default)
+                                - `title`: Semantic search against document titles
+                                - `headnotes`: Semantic search against headnote summaries
+                                - `hybrid`: Combined semantic + keyword search (best for legal citations)
+                                - Filters: jurisdiction, doc_type, practice_area, status
                                 """)
                         .contact(new Contact()
                                 .name("LLM Team")
