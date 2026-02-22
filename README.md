@@ -211,6 +211,26 @@ curl http://llm-alb-1402483560.us-east-1.elb.amazonaws.com/api/legal/stats
 ./test-legal-api.sh
 ```
 
+### Verbose Mode
+
+Both test scripts support a `-v` / `--verbose` flag. By default tests print a compact pass/fail line per test. With verbose enabled, each test shows:
+
+- **Curl command** — the exact request being issued (method, URL, payload)
+- **Response metrics** — HTTP status, response size, and timing breakdown (DNS lookup, TCP connect, time-to-first-byte, total)
+- **Search details** — result count, search method, API latency, and the top-ranked hit with similarity score
+- **Performance stats** — per-query latency during the 10-query benchmark, plus min/max/avg/P95 summary
+- **AWS cost estimate** — incremental ALB and data transfer costs for the test run, with LCU breakdown
+
+```bash
+# Verbose product tests
+./test-search-api.sh -v http://llm-alb-1402483560.us-east-1.elb.amazonaws.com
+
+# Verbose legal tests
+./test-legal-api.sh --verbose http://llm-alb-1402483560.us-east-1.elb.amazonaws.com
+```
+
+The flag can appear before or after the base URL.
+
 ### Test Coverage
 
 **Product tests** (`test-search-api.sh`):
