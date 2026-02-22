@@ -272,8 +272,3 @@ curl http://llm-alb-1402483560.us-east-1.elb.amazonaws.com/api/legal/stats
 6. Forces a new ECS deployment
 7. Waits for rollout to stabilize
 8. Verifies both product and legal search endpoints
-
-## Additional Documentation
-
-- **[RUNBOOK-legal-search.md](RUNBOOK-legal-search.md)** — Detailed runbook covering model choices (pros/cons), ingestion encoding, search decoding, RAG generation, operations, and troubleshooting
-- **[legal-demo-plan.md](legal-demo-plan.md)** — Original implementation plan for the legal document search adaptation
