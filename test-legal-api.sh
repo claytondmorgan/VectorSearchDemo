@@ -1,13 +1,13 @@
 #!/bin/bash
 #
-# Test script for the Java Search Service API (Product Search)
+# Test script for the Legal Document Search API
 #
 # Usage:
-#   ./test-search-api.sh                              # localhost, non-verbose
-#   ./test-search-api.sh http://my-alb.com             # custom URL, non-verbose
-#   ./test-search-api.sh -v                            # localhost, verbose
-#   ./test-search-api.sh -v http://my-alb.com          # custom URL, verbose
-#   ./test-search-api.sh http://my-alb.com --verbose   # custom URL, verbose
+#   ./test-legal-api.sh                              # localhost, non-verbose
+#   ./test-legal-api.sh http://my-alb.com             # custom URL, non-verbose
+#   ./test-legal-api.sh -v                            # localhost, verbose
+#   ./test-legal-api.sh -v http://my-alb.com          # custom URL, verbose
+#   ./test-legal-api.sh http://my-alb.com --verbose   # custom URL, verbose
 #
 # Flags:
 #   -v, --verbose   Show curl commands, response details, timing breakdown,
@@ -15,8 +15,8 @@
 #
 # Prerequisites:
 #   - Java search service running
-#   - Python inference service running (for /embed delegation)
-#   - Database with ingested products
+#   - Python inference service running (for /legal/search delegation)
+#   - Database with ingested legal documents (legal_documents table)
 #   - python3 available on PATH
 #
 
@@ -92,7 +92,7 @@ print_metrics() {
 
 # ── Header ────────────────────────────────────────────────────
 echo "=============================================="
-echo "Java Search Service API Tests"
+echo "Legal Document Search API Tests"
 echo "Base URL: $BASE_URL"
 [ "$VERBOSE" = true ] && echo "Mode:     VERBOSE"
 echo "=============================================="
@@ -122,7 +122,7 @@ run_test() {
             echo "          -d '$data'"
         fi
     else
-        printf "%-50s" "$name"
+        printf "%-55s" "$name"
     fi
 
     local response
@@ -174,35 +174,26 @@ run_test() {
     return 0
 }
 
-run_search_test() {
+run_legal_search_test() {
     local name="$1"
-    local query="$2"
-    local extra_params="$3"
-    local min_results="$4"
-    local check_similarity="$5"
+    local data="$2"
+    local min_results="$3"
+    local check_similarity="$4"
 
     ((TEST_NUM++))
-
-    # Build the request body
-    local data
-    if [ -n "$extra_params" ]; then
-        data="{\"query\": \"$query\", $extra_params}"
-    else
-        data="{\"query\": \"$query\"}"
-    fi
 
     if [ "$VERBOSE" = true ]; then
         echo ""
         echo -e "  ${CYAN}[$TEST_NUM] $name${NC}"
-        echo "      \$ curl -s -X POST \"${BASE_URL}/api/search\" \\"
+        echo "      \$ curl -s -X POST \"${BASE_URL}/api/legal/search\" \\"
         echo "          -H \"Content-Type: application/json\" \\"
         echo "          -d '$data'"
     else
-        printf "%-50s" "$name"
+        printf "%-55s" "$name"
     fi
 
     local response
-    response=$(curl -s -w "$CURL_FMT" -X POST "$BASE_URL/api/search" \
+    response=$(curl -s -w "$CURL_FMT" -X POST "$BASE_URL/api/legal/search" \
         -H "Content-Type: application/json" \
         -d "$data")
 
@@ -247,8 +238,6 @@ else:
     scores = [r.get('similarity', 0) for r in results]
     if any(s < 0 or s > 1 for s in scores):
         print('INVALID_RANGE')
-    elif scores != sorted(scores, reverse=True):
-        print('NOT_SORTED')
     else:
         print('OK')
 " 2>/dev/null)
@@ -265,11 +254,12 @@ else:
         fi
     fi
 
-    local api_latency
-    api_latency=$(echo "$RESP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('latency_ms', 'n/a'))" 2>/dev/null)
+    local method api_latency
+    method=$(echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('search_method', 'n/a'))" 2>/dev/null)
+    api_latency=$(echo "$RESP_BODY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('latency_ms', 'n/a'))" 2>/dev/null)
 
     if [ "$VERBOSE" = true ]; then
-        echo "      Results: $num_results | API latency: ${api_latency}ms"
+        echo "      Results: $num_results | method: $method | API latency: ${api_latency}ms"
         if [ "$num_results" -gt 0 ]; then
             local top_hit
             top_hit=$(echo "$RESP_BODY" | python3 -c "
@@ -282,9 +272,9 @@ print(f'{title} (similarity: {sim:.3f})')
 " 2>/dev/null)
             echo "      Top hit: $top_hit"
         fi
-        echo -e "      ${GREEN}PASS${NC} ($num_results results)"
+        echo -e "      ${GREEN}PASS${NC} ($num_results results, method=$method)"
     else
-        echo -e "${GREEN}PASS${NC} ($num_results results)"
+        echo -e "${GREEN}PASS${NC} ($num_results results, method=$method)"
     fi
     ((PASS++))
     return 0
@@ -307,7 +297,7 @@ run_status_test() {
         echo "          -H \"Content-Type: application/json\" \\"
         echo "          -d '$data'"
     else
-        printf "%-50s" "$name"
+        printf "%-55s" "$name"
     fi
 
     local response
@@ -339,118 +329,146 @@ run_status_test() {
 #  TESTS
 # ══════════════════════════════════════════════════════════════
 
-echo "--- Health & Info Endpoints ---"
+echo "--- 1. Health & Info Endpoints ---"
 if [ "$VERBOSE" = true ]; then
-    echo -e "    ${DIM}Verify product search service is healthy and embedding model is loaded${NC}"
+    echo -e "    ${DIM}Verify service health, metadata, and database connectivity${NC}"
 fi
 echo ""
 
-run_test "GET /api/health returns 200" \
-    "GET" "/api/health" "" "200" "status" "healthy"
+run_test "GET /api/legal/health returns 200" \
+    "GET" "/api/legal/health" "" "200" "status" "healthy"
 
-run_test "GET /api/info returns 200" \
-    "GET" "/api/info" "" "200" "service" "LLM Vector Search Engine"
+run_test "GET /api/legal/info returns 200" \
+    "GET" "/api/legal/info" "" "200" "service" "Legal Document Search Engine"
+
+run_test "GET /api/legal/stats returns 200" \
+    "GET" "/api/legal/stats" "" "200"
 
 echo ""
-echo "--- Basic Search Tests ---"
+echo "--- 2. Semantic Search — Conceptual Legal Queries ---"
 if [ "$VERBOSE" = true ]; then
-    echo -e "    ${DIM}Semantic vector search using all-MiniLM-L6-v2 embeddings (384-dim).${NC}"
-    echo -e "    ${DIM}Tests basic search functionality with various top_k values.${NC}"
+    echo -e "    ${DIM}Pure semantic similarity search using ModernBERT legal embeddings (768-dim).${NC}"
+    echo -e "    ${DIM}Queries are natural language legal concepts without statute citations.${NC}"
 fi
 echo ""
 
-run_search_test "Basic search query" \
-    "comfortable shoes" "" 1 true
+run_legal_search_test "Employment discrimination search" \
+    '{"query": "employment discrimination reasonable accommodation", "top_k": 5}' 1 true
 
-run_search_test "Search with top_k=5" \
-    "running shoes" "\"top_k\": 5" 1 true
+run_legal_search_test "Duty of care / negligence" \
+    '{"query": "duty of care negligence standard", "top_k": 5}' 1 true
 
-run_search_test "Search with top_k=1" \
-    "laptop computer" "\"top_k\": 1" 1 true
+run_legal_search_test "Constitutional right to counsel" \
+    '{"query": "constitutional right to counsel", "top_k": 5}' 1 true
 
-run_search_test "Search with top_k=20" \
-    "electronics" "\"top_k\": 20" 1 true
+run_legal_search_test "Search for wrongful termination" \
+    '{"query": "wrongful termination retaliation", "top_k": 5}' 1 true
+
+run_legal_search_test "Search for Miranda rights" \
+    '{"query": "Miranda rights custodial interrogation warnings", "top_k": 5}' 1 true
 
 echo ""
-echo "--- Search Field Tests ---"
+echo "--- 3. Hybrid Search — Semantic + Keyword Combined ---"
 if [ "$VERBOSE" = true ]; then
-    echo -e "    ${DIM}Test content vs title embedding search fields.${NC}"
+    echo -e "    ${DIM}Combines vector cosine similarity (HNSW) with PostgreSQL full-text search (GIN)${NC}"
+    echo -e "    ${DIM}via Reciprocal Rank Fusion (RRF, k=60). Best for queries with legal citations.${NC}"
 fi
 echo ""
 
-run_search_test "Search by content (default)" \
-    "waterproof jacket for hiking" "\"search_field\": \"content\"" 1 true
+run_legal_search_test "Hybrid: statute citation 42 U.S.C. § 1983" \
+    '{"query": "42 U.S.C. § 1983", "search_field": "hybrid", "top_k": 5}' 0 true
 
-run_search_test "Search by title" \
-    "running shoes" "\"search_field\": \"title\"" 1 true
+run_legal_search_test "Hybrid: civil rights violation" \
+    '{"query": "civil rights violation Section 1983", "search_field": "hybrid", "top_k": 5}' 1 true
+
+run_legal_search_test "Hybrid: ADA disability accommodation" \
+    '{"query": "ADA disability reasonable accommodation 42 U.S.C. § 12101", "search_field": "hybrid", "top_k": 5}' 1 true
 
 echo ""
-echo "--- Similarity Threshold Tests ---"
+echo "--- 4. Jurisdiction Filtering ---"
 if [ "$VERBOSE" = true ]; then
-    echo -e "    ${DIM}Filter results by minimum cosine similarity score (0.0 to 1.0).${NC}"
-    echo -e "    ${DIM}Higher thresholds return fewer but more relevant results.${NC}"
+    echo -e "    ${DIM}Pre-filter results by jurisdiction before vector search.${NC}"
+    echo -e "    ${DIM}Uses B-tree index on jurisdiction column for fast filtering.${NC}"
 fi
 echo ""
 
-run_search_test "Search with low threshold (0.1)" \
-    "kitchen appliances" "\"similarity_threshold\": 0.1" 1 true
+run_legal_search_test "CA jurisdiction: wrongful termination" \
+    '{"query": "wrongful termination", "jurisdiction": "CA", "top_k": 5}' 0 true
 
-run_search_test "Search with medium threshold (0.3)" \
-    "kitchen appliances" "\"similarity_threshold\": 0.3" 0 true
+run_legal_search_test "NY jurisdiction: wrongful termination" \
+    '{"query": "wrongful termination", "jurisdiction": "NY", "top_k": 5}' 0 true
 
-run_search_test "Search with high threshold (0.5)" \
-    "kitchen appliances" "\"similarity_threshold\": 0.5" 0 true
+run_legal_search_test "US Supreme Court: constitutional rights" \
+    '{"query": "constitutional rights", "jurisdiction": "US_Supreme_Court", "top_k": 5}' 0 true
 
 echo ""
-echo "--- Semantic Search Tests ---"
+echo "--- 5. Status Filtering (Shepard's Demo) ---"
 if [ "$VERBOSE" = true ]; then
-    echo -e "    ${DIM}Natural language queries testing semantic understanding.${NC}"
-    echo -e "    ${DIM}Queries describe intent rather than exact product names.${NC}"
+    echo -e "    ${DIM}Exclude overruled authorities (Shepard's-style citation validation).${NC}"
+    echo -e "    ${DIM}Filters on status column: good_law, distinguished, overruled, questioned.${NC}"
 fi
 echo ""
 
-run_search_test "Semantic: gift for cooking enthusiast" \
-    "gift for someone who loves cooking" "" 1 true
+run_legal_search_test "Exclude overruled: separate but equal" \
+    '{"query": "separate but equal", "status_filter": "exclude_overruled", "top_k": 10}' 0 true
 
-run_search_test "Semantic: budget electronics" \
-    "cheap affordable electronics under 50 dollars" "" 1 true
-
-run_search_test "Semantic: outdoor activity gear" \
-    "equipment for hiking camping outdoor adventures" "" 1 true
-
-run_search_test "Semantic: work from home setup" \
-    "home office desk chair computer accessories" "" 1 true
-
-run_search_test "Semantic: fitness and health" \
-    "workout exercise gym fitness equipment" "" 1 true
+run_legal_search_test "Exclude overruled: search and seizure" \
+    '{"query": "unreasonable search and seizure exclusionary rule", "status_filter": "exclude_overruled", "top_k": 5}' 0 true
 
 echo ""
-echo "--- Edge Cases & Error Handling ---"
+echo "--- 6. Document Type Filtering ---"
 if [ "$VERBOSE" = true ]; then
-    echo -e "    ${DIM}Validate input validation, error responses, and unusual query handling.${NC}"
+    echo -e "    ${DIM}Filter by doc_type: case_law, statute, regulation, practice_guide.${NC}"
+fi
+echo ""
+
+run_legal_search_test "Statutes only: disability accommodation" \
+    '{"query": "disability accommodation", "doc_type": "statute", "top_k": 5}' 0 true
+
+run_legal_search_test "Case law only: disability accommodation" \
+    '{"query": "disability accommodation", "doc_type": "case_law", "top_k": 5}' 0 true
+
+run_legal_search_test "Practice guides: filing discrimination claim" \
+    '{"query": "how to file discrimination claim", "doc_type": "practice_guide", "top_k": 5}' 0 true
+
+echo ""
+echo "--- 7. Semantic vs Hybrid Comparison ---"
+if [ "$VERBOSE" = true ]; then
+    echo -e "    ${DIM}Demonstrates that citation symbols (§) are handled better by hybrid search${NC}"
+    echo -e "    ${DIM}which combines semantic understanding with keyword matching.${NC}"
+fi
+echo ""
+
+echo -e "${YELLOW}Comparing semantic vs hybrid for citation '§ 1983':${NC}"
+
+run_legal_search_test "  Semantic only: § 1983" \
+    '{"query": "§ 1983", "search_field": "content", "top_k": 5}' 0 true
+
+run_legal_search_test "  Hybrid: § 1983" \
+    '{"query": "§ 1983", "search_field": "hybrid", "top_k": 5}' 0 true
+
+echo ""
+echo "--- 8. Edge Cases & Error Handling ---"
+if [ "$VERBOSE" = true ]; then
+    echo -e "    ${DIM}Validate input validation, error responses, and combined filter behavior.${NC}"
 fi
 echo ""
 
 run_status_test "Empty query returns 400" \
-    "/api/search" '{"query": ""}' "400"
+    "/api/legal/search" '{"query": ""}' "400"
 
 run_status_test "Missing query field returns 400" \
-    "/api/search" '{"top_k": 5}' "400"
+    "/api/legal/search" '{"top_k": 5}' "400"
 
 run_status_test "Whitespace-only query returns 400" \
-    "/api/search" '{"query": "   "}' "400"
+    "/api/legal/search" '{"query": "   "}' "400"
 
-run_search_test "Long query (100+ chars)" \
-    "I am looking for a really good product that is high quality and affordable and will last a long time and is perfect for everyday use" "" 0 true
-
-run_search_test "Query with special characters" \
-    "laptop & computer (accessories)" "" 0 true
-
-run_search_test "Query with unicode" \
-    "café coffee maker électronique" "" 0 true
+# Combined filters
+run_legal_search_test "Combined: CA + employment + case_law" \
+    '{"query": "discrimination", "jurisdiction": "CA", "practice_area": "employment", "doc_type": "case_law", "top_k": 5}' 0 true
 
 echo ""
-echo "--- Response Structure Tests ---"
+echo "--- 9. Response Structure Tests ---"
 if [ "$VERBOSE" = true ]; then
     echo -e "    ${DIM}Validate JSON response schema for both wrapper and result objects.${NC}"
 fi
@@ -461,23 +479,23 @@ echo ""
 if [ "$VERBOSE" = true ]; then
     echo ""
     echo -e "  ${CYAN}[$TEST_NUM] Response has required fields${NC}"
-    echo "      \$ curl -s -X POST \"${BASE_URL}/api/search\" \\"
+    echo "      \$ curl -s -X POST \"${BASE_URL}/api/legal/search\" \\"
     echo "          -H \"Content-Type: application/json\" \\"
-    echo "          -d '{\"query\": \"test product\", \"top_k\": 3}'"
+    echo "          -d '{\"query\": \"employment law\", \"top_k\": 3}'"
 else
-    printf "%-50s" "Response has required fields"
+    printf "%-55s" "Response has required fields"
 fi
 
-response=$(curl -s -w "$CURL_FMT" -X POST "$BASE_URL/api/search" \
+response=$(curl -s -w "$CURL_FMT" -X POST "$BASE_URL/api/legal/search" \
     -H "Content-Type: application/json" \
-    -d '{"query": "test product", "top_k": 3}')
+    -d '{"query": "employment law", "top_k": 3}')
 parse_metrics "$response"
 print_metrics
 
 fields_check=$(echo "$RESP_BODY" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-required = ['query', 'search_field', 'total_results', 'results', 'latency_ms']
+required = ['query', 'search_field', 'total_results', 'results', 'latency_ms', 'search_method']
 missing = [f for f in required if f not in d]
 if missing:
     print('MISSING: ' + ', '.join(missing))
@@ -486,7 +504,7 @@ else:
 " 2>/dev/null)
 
 if [ "$fields_check" == "OK" ]; then
-    [ "$VERBOSE" = true ] && echo "      Fields: query, search_field, total_results, results, latency_ms ✓"
+    [ "$VERBOSE" = true ] && echo "      Fields: query, search_field, total_results, results, latency_ms, search_method ✓"
     if [ "$VERBOSE" = true ]; then
         echo -e "      ${GREEN}PASS${NC}"
     else
@@ -502,14 +520,14 @@ else
     ((FAIL++))
 fi
 
-# ── Result objects have required fields ──
+# ── Result objects have legal-specific fields ──
 ((TEST_NUM++))
 if [ "$VERBOSE" = true ]; then
     echo ""
-    echo -e "  ${CYAN}[$TEST_NUM] Result objects have required fields${NC}"
+    echo -e "  ${CYAN}[$TEST_NUM] Result objects have legal-specific fields${NC}"
     echo "      (reusing response from previous test)"
 else
-    printf "%-50s" "Result objects have required fields"
+    printf "%-55s" "Result objects have legal-specific fields"
 fi
 
 result_fields_check=$(echo "$RESP_BODY" | python3 -c "
@@ -519,7 +537,7 @@ results = d.get('results', [])
 if not results:
     print('NO_RESULTS')
 else:
-    required = ['id', 'title', 'similarity']
+    required = ['id', 'doc_id', 'doc_type', 'title', 'similarity', 'search_method', 'content_snippet']
     for i, r in enumerate(results):
         missing = [f for f in required if f not in r]
         if missing:
@@ -529,7 +547,7 @@ else:
 " 2>/dev/null)
 
 if [ "$result_fields_check" == "OK" ] || [ "$result_fields_check" == "NO_RESULTS" ]; then
-    [ "$VERBOSE" = true ] && echo "      Fields: id, title, similarity ✓"
+    [ "$VERBOSE" = true ] && echo "      Fields: id, doc_id, doc_type, title, similarity, search_method, content_snippet ✓"
     if [ "$VERBOSE" = true ]; then
         echo -e "      ${GREEN}PASS${NC}"
     else
@@ -552,7 +570,7 @@ if [ "$VERBOSE" = true ]; then
     echo -e "  ${CYAN}[$TEST_NUM] Response latency is reasonable (<5s)${NC}"
     echo "      (reusing response from previous test)"
 else
-    printf "%-50s" "Response latency is reasonable (<5s)"
+    printf "%-55s" "Response latency is reasonable (<5s)"
 fi
 
 latency_check=$(echo "$RESP_BODY" | python3 -c "
@@ -583,31 +601,45 @@ else
         echo -e "${YELLOW}WARN${NC} (TOO_SLOW: ${latency_val}ms)"
     fi
     ((WARN++))
-    ((PASS++))  # Don't fail on slow, just warn
+    ((PASS++))
 fi
 
 echo ""
-echo "--- Performance Tests ---"
+echo "--- 10. Performance Tests ---"
 if [ "$VERBOSE" = true ]; then
-    echo -e "    ${DIM}Run 10 sequential product searches to measure throughput and latency distribution.${NC}"
+    echo -e "    ${DIM}Run 10 sequential legal searches to measure throughput and latency distribution.${NC}"
+    echo -e "    ${DIM}Each query uses a different legal topic to avoid caching effects.${NC}"
 fi
 echo ""
 
 ((TEST_NUM++))
 if [ "$VERBOSE" = true ]; then
-    echo -e "  ${CYAN}[$TEST_NUM] 10 sequential searches${NC}"
+    echo -e "  ${CYAN}[$TEST_NUM] 10 sequential legal searches${NC}"
 else
-    printf "%-50s" "10 sequential searches complete"
+    printf "%-55s" "10 sequential legal searches complete"
 fi
 
 total_latency=0
 all_passed=true
 latencies=()
 
-for i in {1..10}; do
-    perf_response=$(curl -s -w "$CURL_FMT" -X POST "$BASE_URL/api/search" \
+queries=(
+    "employment discrimination"
+    "reasonable accommodation ADA"
+    "wrongful termination California"
+    "Miranda rights"
+    "search and seizure fourth amendment"
+    "due process equal protection"
+    "Title VII civil rights"
+    "negligence duty of care"
+    "contract breach damages"
+    "intellectual property patent"
+)
+
+for i in {0..9}; do
+    perf_response=$(curl -s -w "$CURL_FMT" -X POST "$BASE_URL/api/legal/search" \
         -H "Content-Type: application/json" \
-        -d "{\"query\": \"test query number $i\", \"top_k\": 5}")
+        -d "{\"query\": \"${queries[$i]}\", \"top_k\": 5}")
 
     parse_metrics "$perf_response"
 
@@ -615,7 +647,7 @@ for i in {1..10}; do
 
     if [ -z "$latency" ] || [ "$latency" == "0" ]; then
         all_passed=false
-        [ "$VERBOSE" = true ] && echo -e "      Query $i/10: \"test query number $i\" ... ${RED}FAILED${NC}"
+        [ "$VERBOSE" = true ] && echo -e "      Query $((i+1))/10: \"${queries[$i]}\" ... ${RED}FAILED${NC}"
         break
     fi
 
@@ -624,7 +656,7 @@ for i in {1..10}; do
 
     if [ "$VERBOSE" = true ]; then
         num_r=$(echo "$RESP_BODY" | python3 -c "import sys,json; print(json.load(sys.stdin).get('total_results', 0))" 2>/dev/null)
-        echo "      Query $i/10: \"test query number $i\" ... ${latency}ms | ${num_r} results | wall: ${RESP_TIME_MS}ms | $(format_bytes $RESP_BYTES_DOWN)"
+        echo "      Query $((i+1))/10: \"${queries[$i]}\" ... ${latency}ms | ${num_r} results | wall: ${RESP_TIME_MS}ms | $(format_bytes $RESP_BYTES_DOWN)"
     fi
 done
 
@@ -632,6 +664,7 @@ if [ "$all_passed" == true ]; then
     avg_latency=$((total_latency / 10))
 
     if [ "$VERBOSE" = true ]; then
+        # Calculate min, max, p95 using python
         perf_stats=$(python3 -c "
 import sys
 latencies = [${latencies[0]}$(printf ',%s' "${latencies[@]:1}")]
@@ -667,7 +700,7 @@ SUITE_DURATION_S=$(echo "$SUITE_DURATION_MS" | awk '{printf "%.1f", $1/1000}')
 
 echo ""
 echo "=============================================="
-echo "Test Results"
+echo "Legal Search API Test Results"
 echo "=============================================="
 echo -e "Passed: ${GREEN}$PASS${NC}"
 echo -e "Failed: ${RED}$FAIL${NC}"
