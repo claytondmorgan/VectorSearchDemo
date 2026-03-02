@@ -2,7 +2,49 @@
 
 A Spring Boot service that provides semantic and hybrid vector search for both product data and legal documents, using pgvector and delegated embeddings from a Python inference service.
 
-## AWS Deployment
+## Running the Service
+
+### Local Development
+
+The easiest way to run locally is from the Python project, which starts both services:
+
+```bash
+cd /path/to/llm-inference-test6
+./local-dev.sh                # Starts PostgreSQL, Python (8000), Java (8080)
+./local-dev-stop.sh           # Stops both services
+```
+
+Or run just the Java service (Python must already be running on port 8000):
+
+```bash
+cd /path/to/llm-inference-test6
+./local-dev.sh --skip-java    # Start Python + DB first
+```
+```bash
+# Then in this project:
+mvn clean package -DskipTests
+DB_HOST=localhost DB_PORT=5433 DB_NAME=llmdb DB_USERNAME=postgres DB_PASSWORD=postgres \
+  EMBEDDING_SERVICE_URL=http://localhost:8000 \
+  java -jar target/search-engine-1.0.0.jar
+```
+
+**Prerequisites:** Java 17+, Maven, Docker (for PostgreSQL container on port 5433), Python service running on port 8000.
+
+**Local URLs:**
+- Health: http://localhost:8080/api/health
+- Swagger UI: http://localhost:8080/swagger-ui/index.html
+
+### AWS
+
+Start/stop AWS infrastructure from the Python project:
+
+```bash
+cd /path/to/llm-inference-test6
+./aws-startup.sh     # Start RDS + ECS services
+./aws-shutdown.sh    # Stop to minimize costs
+```
+
+**AWS Deployment**
 
 The service is deployed to AWS ECS and accessible via Application Load Balancer.
 
@@ -194,21 +236,21 @@ curl http://llm-alb-1402483560.us-east-1.elb.amazonaws.com/api/legal/stats
 ### Product Search Tests (26 tests)
 
 ```bash
-# Against AWS
-./test-search-api.sh http://llm-alb-1402483560.us-east-1.elb.amazonaws.com
+# Local (after ./local-dev.sh)
+./test-search-api.sh http://localhost:8080
 
-# Against local
-./test-search-api.sh
+# AWS
+./test-search-api.sh http://llm-alb-1402483560.us-east-1.elb.amazonaws.com
 ```
 
 ### Legal Search Tests (29 tests)
 
 ```bash
-# Against AWS
-./test-legal-api.sh http://llm-alb-1402483560.us-east-1.elb.amazonaws.com
+# Local (after ./local-dev.sh)
+./test-legal-api.sh http://localhost:8080
 
-# Against local
-./test-legal-api.sh
+# AWS
+./test-legal-api.sh http://llm-alb-1402483560.us-east-1.elb.amazonaws.com
 ```
 
 ### Verbose Mode
